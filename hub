@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """General command-line interface to the Virgin Media Hub3
 
 """
@@ -10,6 +10,7 @@ import netaddr
 import snmp
 import utils
 import virginmedia
+import proxy_router
 
 SUBCOMMANDS = []
 
@@ -540,6 +541,70 @@ def fw_log(hub, _args):
     log = hub.fw_log
     for entry in log.values():
         print(entry.stamp, entry.text)
+
+
+@subcommand
+@nohub
+@Args([
+    (("--file", "-f"), dict(help="Proxy pool JSON file", default="proxies.json"))
+])
+def proxy_list(args):
+    """List proxies in the current proxy pool."""
+    pool = proxy_router.ProxyPool()
+    if os.path.exists(args.file):
+        pool.load_from_file(args.file)
+        proxies = {str(i): p.to_dict() for i, p in enumerate(pool.proxies, 1)}
+        if proxies:
+            print(utils.format_table(proxies))
+        else:
+            print("No proxies found in pool.")
+    else:
+        print("Proxy file {0} not found.".format(args.file))
+
+@subcommand
+@nohub
+@Args([
+    ("cidr", dict(help="Subnet CIDR or IP range (e.g., 192.168.1.0/24)")),
+    ("port", dict(type=int, help="Base port number")),
+    (("--count", "-c"), dict(type=int, help="Maximum number of proxies to generate")),
+    (("--protocol", "-p"), dict(default="http", choices=["http", "https", "socks5"], help="Proxy protocol")),
+    (("--file", "-f"), dict(default="proxies.json", help="Output file to save proxies to"))
+])
+def proxy_generate(args):
+    """Generate proxy entries from an IP subnet."""
+    pool = proxy_router.ProxyPool()
+    if os.path.exists(args.file):
+        try:
+            pool.load_from_file(args.file)
+        except Exception:
+            pass
+    generated = pool.generate_from_subnet(args.cidr, args.port, count=args.count, protocol=args.protocol)
+    pool.save_to_file(args.file)
+    print("Generated {0} proxies and saved to {1}".format(len(generated), args.file))
+
+@subcommand
+@nohub
+@Args([
+    (("--listen-host",), dict(default="0.0.0.0", help="Host interface to listen on")),
+    (("--listen-port",), dict(type=int, default=8080, help="Port to listen on")),
+    (("--strategy",), dict(default="round_robin", choices=["round_robin", "random"], help="Proxy rotation strategy")),
+    (("--file", "-f"), dict(default="proxies.json", help="Proxy pool JSON file"))
+])
+def proxy_start(args):
+    """Start the IP Proxy Router server."""
+    pool = proxy_router.ProxyPool()
+    if os.path.exists(args.file):
+        pool.load_from_file(args.file)
+        print("Loaded {0} proxies from {1}".format(len(pool.proxies), args.file))
+    else:
+        print("No proxy file found at {0}. Running in direct pass-through mode.".format(args.file))
+
+    server = proxy_router.ProxyServer(host=args.listen_host, port=args.listen_port, pool=pool, rotation_strategy=args.strategy)
+    print("Starting Proxy Router server on {0}:{1} (Strategy: {2})...".format(args.listen_host, args.listen_port, args.strategy))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping Proxy Router server.")
 
 def main():
     """Main function. Obviously!"""
