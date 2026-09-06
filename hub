@@ -588,6 +588,8 @@ def proxy_generate(args):
     (("--listen-host",), dict(default="0.0.0.0", help="Host interface to listen on")),
     (("--listen-port",), dict(type=int, default=8080, help="Port to listen on")),
     (("--strategy",), dict(default="round_robin", choices=["round_robin", "random"], help="Proxy rotation strategy")),
+    (("--auth-user",), dict(default=None, help="Username required for proxy authentication")),
+    (("--auth-pass",), dict(default=None, help="Password required for proxy authentication")),
     (("--file", "-f"), dict(default="proxies.json", help="Proxy pool JSON file"))
 ])
 def proxy_start(args):
@@ -599,8 +601,17 @@ def proxy_start(args):
     else:
         print("No proxy file found at {0}. Running in direct pass-through mode.".format(args.file))
 
-    server = proxy_router.ProxyServer(host=args.listen_host, port=args.listen_port, pool=pool, rotation_strategy=args.strategy)
-    print("Starting Proxy Router server on {0}:{1} (Strategy: {2})...".format(args.listen_host, args.listen_port, args.strategy))
+    server = proxy_router.ProxyServer(
+        host=args.listen_host,
+        port=args.listen_port,
+        pool=pool,
+        rotation_strategy=args.strategy,
+        auth_user=args.auth_user,
+        auth_pass=args.auth_pass
+    )
+    auth_msg = " (Auth Enabled)" if args.auth_user and args.auth_pass else " (No Auth)"
+    print("Starting Proxy Router server on {0}:{1} (Strategy: {2}){3}...".format(
+        args.listen_host, args.listen_port, args.strategy, auth_msg))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1,11 +1,12 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """IP Proxy Generator, Pool Manager, and Router.
 
 This module allows generating IP proxies (e.g. from CIDR ranges or list),
-managing proxy pools, rotating proxies, and starting a local proxy router
-server to route traffic anywhere.
+managing proxy pools, rotating proxies, and starting a local/remote proxy router
+server to route traffic anywhere across Windows, Linux, VMs, and third-party networks.
 """
 
+import base64
 import http.server
 import json
 import random
@@ -119,13 +120,45 @@ class ProxyPool:
 
 
 class ProxyRequestHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP request handler for local Proxy Server."""
+    """HTTP request handler for local/remote Proxy Server with authentication."""
 
     pool = ProxyPool()
     rotation_strategy = 'round_robin'
+    auth_username = None
+    auth_password = None
+
+    def _check_auth(self):
+        """Validate Proxy-Authorization header if authentication is required."""
+        if not self.auth_username or not self.auth_password:
+            return True
+
+        auth_header = self.headers.get('Proxy-Authorization')
+        if not auth_header:
+            self.send_response(407)
+            self.send_header('Proxy-Authenticate', 'Basic realm="Proxy Router"')
+            self.end_headers()
+            return False
+
+        try:
+            auth_type, encoded = auth_header.split(' ', 1)
+            if auth_type.lower() == 'basic':
+                decoded = base64.b64decode(encoded).decode('utf-8')
+                user, passwd = decoded.split(':', 1)
+                if user == self.auth_username and passwd == self.auth_password:
+                    return True
+        except Exception:
+            pass
+
+        self.send_response(407)
+        self.send_header('Proxy-Authenticate', 'Basic realm="Proxy Router"')
+        self.end_headers()
+        return False
 
     def do_CONNECT(self):
         """Handle HTTP CONNECT method for SSL tunneling."""
+        if not self._check_auth():
+            return
+
         upstream = self.pool.get_next(self.rotation_strategy)
         target_host, target_port = self.path.split(':')
         target_port = int(target_port)
@@ -167,8 +200,11 @@ class ProxyRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def _forward_request(self):
         """Forward HTTP request directly or via upstream proxy."""
+        if not self._check_auth():
+            return
+
         upstream = self.pool.get_next(self.rotation_strategy)
-        req_headers = {key: val for key, val in self.headers.items()}
+        req_headers = {key: val for key, val in self.headers.items() if key.lower() != 'proxy-authorization'}
 
         content_len = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_len) if content_len > 0 else None
@@ -193,7 +229,9 @@ class ProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """Threaded Proxy Router Server."""
     daemon_threads = True
 
-    def __init__(self, host='0.0.0.0', port=8080, pool=None, rotation_strategy='round_robin'):
+    def __init__(self, host='0.0.0.0', port=8080, pool=None, rotation_strategy='round_robin', auth_user=None, auth_pass=None):
         ProxyRequestHandler.pool = pool if pool else ProxyPool()
         ProxyRequestHandler.rotation_strategy = rotation_strategy
+        ProxyRequestHandler.auth_username = auth_user
+        ProxyRequestHandler.auth_password = auth_pass
         super().__init__((host, int(port)), ProxyRequestHandler)
