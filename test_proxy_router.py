@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for proxy_router module."""
 
+import base64
 import os
 import unittest
 import tempfile
@@ -69,6 +70,36 @@ class TestProxyRouter(unittest.TestCase):
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    def test_proxy_handler_authentication(self):
+        class DummyHeaders(dict):
+            def get(self, key, default=None):
+                return super().get(key, default)
+
+        class DummyRequest(proxy_router.ProxyRequestHandler):
+            def __init__(self):
+                self.headers = DummyHeaders()
+                self.auth_username = "admin"
+                self.auth_password = "secretpassword"
+
+            def send_response(self, code):
+                self.resp_code = code
+
+            def send_header(self, k, v):
+                pass
+
+            def end_headers(self):
+                pass
+
+        dummy = DummyRequest()
+
+        # No auth header -> False
+        self.assertFalse(dummy._check_auth())
+
+        # Valid auth header -> True
+        auth_str = base64.b64encode(b"admin:secretpassword").decode('ascii')
+        dummy.headers['Proxy-Authorization'] = f"Basic {auth_str}"
+        self.assertTrue(dummy._check_auth())
 
 if __name__ == "__main__":
     unittest.main()
